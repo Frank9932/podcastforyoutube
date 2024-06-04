@@ -1,10 +1,18 @@
 import subprocess
 import argparse
+import os
 
 
-def downloader(files_dir, link):    
-    subprocess.run(["yt-dlp","-x","--audio-format","mp3","-o","%(title)s.%(ext)s", "--paths", files_dir, link])
-    print(f"downloaded {link} to {files_dir}")
+def downloader(files_dir, link):
+    # Check if the destination directory exists
+    if not os.path.exists(files_dir):
+        # Notify and create the directory if it does not exist
+        print(f"Directory {files_dir} does not exist. Creating it...")
+        os.makedirs(files_dir)
+    
+    # Proceed with the download
+    subprocess.run(["yt-dlp", "-x", "--audio-format", "mp3", "-o", "%(title)s.%(ext)s", "--paths", files_dir, link])
+    print(f"Downloaded {link} to {files_dir}")
 
 def main():
     # 创建解析器
