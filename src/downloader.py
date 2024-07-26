@@ -51,18 +51,16 @@ def download_audios(channels,download_dir):
                     if 'entries' in info_dict:
                         # It's a playlist
                         for entry in info_dict['entries']:
-                                if process_entry(
-                                    entry, audio_files_dir,
-                                    kp_yt_chn_nm=channels[channel]["kp_yt_chn_nm"]
-                                ):
-                                    print(f"Exsists error downloading in {url}")                      
+                            process_entry(
+                                entry, audio_files_dir,
+                                kp_yt_chn_nm=channels[channel]["kp_yt_chn_nm"]
+                            )                     
                     else:
                         # It's a single video
-                        if process_entry(
+                        process_entry(
                             info_dict, audio_files_dir,
                             kp_yt_chn_nm=channels[channel]["kp_yt_chn_nm"]
-                        ):
-                            print(f"Exsists error downloading in {url}")
+                        )
                 except (DownloadError, ExtractorError) as e:
                     print(f"Error downloading {url}: {e}")
 
@@ -78,4 +76,4 @@ def process_entry(entry, audio_files_dir,kp_yt_chn_nm=False):
         print(f"Downloaded and saved as {new_filename}")
         return 0
     else:
-        return 1
+        print("Exists error downloading")                      
