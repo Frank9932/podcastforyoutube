@@ -34,7 +34,7 @@ def remove_old_files(channels,data_dir):
                     file_path = os.path.join(root, file)
                     file_date = datetime.date.fromtimestamp(
                         os.path.getmtime(file_path))
-                    if file_date < past_date and file.endswith(".mp3"):
+                    if file_date < past_date and file.endswith(".m4a"):
                         os.remove(file_path)
         finally:
             pass
