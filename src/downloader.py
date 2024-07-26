@@ -1,48 +1,81 @@
-import datetime
 import os
-import subprocess
+import sqlite3
+import yt_dlp
+from yt_dlp.utils import DownloadError, ExtractorError
 
 
-def remove_old_files(_dir):
-    current_date = datetime.date.today()
-    past_date = current_date - datetime.timedelta(days=14)
-    try:
-        for root, dirs, files in os.walk(_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                file_date = datetime.date.fromtimestamp(
-                    os.path.getmtime(file_path))
-                if file_date < past_date and file.endswith(".mp3"):
-                    os.remove(file_path)
-    finally:
-            return
-
-def download_files(config_dic):
-    data_dir = "data"
-    for show_name in config_dic.keys():
-        audio_files_dir = os.path.join(data_dir, show_name)
-        archive_location = os.path.join(
-            data_dir, audio_files_dir, f"archive_{show_name}"
-            )
-        playlists = config_dic[show_name]
-        for playlist in playlists:
-            subprocess.run(
-            [
-                "yt-dlp",
-                "-x",
-                "--audio-format",
-                "mp3",
-                "-o",
-                "%(channel)s_%(title)s.%(ext)s",
-                "--paths",
-                audio_files_dir,
-                "--download-archive",
-                archive_location,
-                playlist,
-                "--playlist-end",
-                "1"
-            ]
+def init_db(db_path='file_info.db'):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            original_filetitle TEXT,
+            archive_id TEXT
+        )'''
         )
+    conn.commit()
+    cursor.close()
+    conn.close()
 
-if __name__ == "__main__":
-    data_dir = "/var/www/podcast/youtube_channels/"
+def store_file_info(original_filetitle, archive_id, db_path='file_info.db'):
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO files (original_filetitle, archive_id)
+        VALUES (?, ?)
+        ''', (original_filetitle, archive_id)
+        )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+def download_audios(channels,download_dir):
+    init_db()
+    for channel in channels.keys():
+        audio_files_dir = os.path.join(download_dir, channel)
+        archive_path = os.path.join(
+            audio_files_dir, "archive")
+        ydl_opts = {
+            'outtmpl': os.path.join(audio_files_dir, '%(id)s.%(ext)s'), 
+            'format': 'bestaudio[ext=m4a]/bestaudio', 
+            'download_archive': archive_path,  
+            'playlistend': channels[channel]['plist_end'],
+            'ignoreerrors':True,
+        }
+        playlists = channels[channel]["plists"]
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            for url in playlists:
+                try:
+                    info_dict = ydl.extract_info(url, download=True)                    
+                    if 'entries' in info_dict:
+                        # It's a playlist
+                        for entry in info_dict['entries']:
+                                if process_entry(
+                                    entry, audio_files_dir,
+                                    kp_yt_chn_nm=channels[channel]["kp_yt_chn_nm"]
+                                ):
+                                    print(f"Exsists error downloading in {url}")                      
+                    else:
+                        # It's a single video
+                        if process_entry(
+                            info_dict, audio_files_dir,
+                            kp_yt_chn_nm=channels[channel]["kp_yt_chn_nm"]
+                        ):
+                            print(f"Exsists error downloading in {url}")
+                except (DownloadError, ExtractorError) as e:
+                    print(f"Error downloading {url}: {e}")
+
+def process_entry(entry, audio_files_dir,kp_yt_chn_nm=False):
+    if entry:
+        if kp_yt_chn_nm:
+            original_filetitle = entry['channel'] + ' ' + entry['title']
+        else:
+            original_filetitle = entry['title']
+        archive_id = entry['id']
+        new_filename = os.path.join(audio_files_dir, f'{archive_id}')
+        store_file_info(original_filetitle, archive_id)
+        print(f"Downloaded and saved as {new_filename}")
+        return 0
+    else:
+        return 1
