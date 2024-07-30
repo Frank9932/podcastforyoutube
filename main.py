@@ -1,5 +1,5 @@
 import json
-from src.utlis import create_rss_file, send_msg
+from src.utlis import create_rss_file, send_msg,remove_old_files
 from src.downloader import download_audios
 
 
@@ -15,7 +15,7 @@ web_dir = "http://192.168.0.225/podcast/"
 # download
 download_audios(channels,data_dir)
 # removal
-# remove_old_files(channels,data_dir)
+remove_old_files(channels,data_dir)
 # make index
 new_update = create_rss_file(channels,data_dir,web_dir)
 print(new_update)

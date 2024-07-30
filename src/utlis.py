@@ -19,7 +19,7 @@ def send_msg(msg):
     r = post(
         f'https://api.telegram.org/bot{token}/sendMessage', 
         json={"chat_id": chat_id, "text": msg}
-        )
+    )
 
 def remove_old_files(channels,data_dir):
     current_date = datetime.date.today()
@@ -33,42 +33,12 @@ def remove_old_files(channels,data_dir):
                 for file in files:
                     file_path = os.path.join(root, file)
                     file_date = datetime.date.fromtimestamp(
-                        os.path.getmtime(file_path))
+                        os.path.getmtime(file_path)
+                    )
                     if file_date < past_date and file.endswith(".m4a"):
                         os.remove(file_path)
         finally:
             pass
-
-def download_files(channels,data_dir):
-    for channel in channels.keys():
-        audio_files_dir = os.path.join(data_dir, channel)
-        archive_location = os.path.join(data_dir, audio_files_dir, "archive")
-        playlists = channels[channel]["plist"]
-        if channels[channel]["kp_yt_chnl_nm"]:
-            file_name = "%(channel)s %(title)s.%(ext)s"
-        else:
-            file_name = "%(title)s.%(ext)s"
-        for playlist in playlists:
-            subprocess.run(
-                [
-                    "yt-dlp",
-                    "-x",
-                    # "--write-thumbnail",
-                    "--audio-format",
-                    "mp3",
-                    "-o",
-                    f"{file_name}",
-                    # "-o",
-                    # "thumbnail:%(channel)s %(title)s.%(ext)s",
-                    "--paths",
-                    audio_files_dir,
-                    "--download-archive",
-                    archive_location,
-                    playlist,
-                    "--playlist-end",
-                    f"{channels[channel]['plist_end']}"
-                ]
-            )
 
 def fetch_file_by_id(cursor,name):
     cursor.execute('SELECT original_filetitle, archive_id FROM files WHERE archive_id = ?', (name,))
@@ -83,7 +53,6 @@ def create_rss_file(channels,data_dir,web_dir,db_path='file_info.db'):
         files = []
         audio_files_dir = os.path.join(data_dir, channel)
         show_web_dir = os.path.join(web_dir, channel)
-        tmp=os.listdir(audio_files_dir)
         for filename in os.listdir(audio_files_dir):
             filepath = os.path.join(audio_files_dir, filename)
             if os.path.isfile(filepath) and filename.lower().endswith('.m4a'):
