@@ -6,11 +6,11 @@ from botocore.exceptions import BotoCoreError
 
 def get_bucket(secrets):
     s3 = boto3.resource(
-    's3',
-    endpoint_url=secrets['bucket']['endpoint_url'],
-    aws_access_key_id=secrets['bucket']['aws_access_key_id'],
-    aws_secret_access_key=secrets['bucket']['aws_secret_access_key'],
-    config=Config(proxies=None),
+        's3',
+        endpoint_url=secrets['bucket']['endpoint_url'],
+        aws_access_key_id=secrets['bucket']['aws_access_key_id'],
+        aws_secret_access_key=secrets['bucket']['aws_secret_access_key'],
+        config=Config(proxies=None),
     )
     bucket = s3.Bucket(secrets['bucket']['bucket_name'])
     return bucket

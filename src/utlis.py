@@ -33,14 +33,6 @@ def create_rss_file(channels, metadata_list, temp_dir, web_dir):
     for channel in channels.keys():
         episodes = []
         for metadata in metadata_list:
-            # archive_id, 
-            # channel, 
-            # yt_channel, 
-            # utime, 
-            # ctime, 
-            # file_size, 5
-            # file_title, 
-            # text_content
             if channels[channel]["keep_old"]:
                 seconds_7_days_ago = 0
             else:
@@ -79,7 +71,7 @@ def create_rss_file(channels, metadata_list, temp_dir, web_dir):
         # write rss index file
         with open(
             os.path.join(temp_dir, f"index_{channel}.rss"),"w",encoding="utf-8"
-            ) as index_file:
+        ) as index_file:
             index_file.write(rss_output)
         
         valid_episodes.extend(episodes)
@@ -95,7 +87,12 @@ def process_subtitle(file_path):
     for line in lines:
         if re.match(r'^\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}$', line):
             continue
-        elif line.strip() and not line.startswith("WEBVTT") and not line.startswith("Kind:") and not line.startswith("Language:"):
+        elif (
+            line.strip() and not 
+            line.startswith("WEBVTT") and not 
+            line.startswith("Kind:") and not 
+            line.startswith("Language:")
+        ):
             text_lines.append(line.strip())
         result = "\n".join(text_lines)
     return result

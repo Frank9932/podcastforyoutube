@@ -24,18 +24,10 @@ def download_audios(channels, dir):
                     if 'entries' in info_dict:
                         # It's a playlist
                         for entry in info_dict['entries']:
-                            process_entry(  
-                                channel,
-                                metadata_list,
-                                entry, dir
-                            )                     
+                            process_entry(channel,metadata_list,entry, dir)
                     else:
                         # It's a single video
-                        process_entry(
-                            channel,
-                            metadata_list,
-                            info_dict, dir
-                        )
+                        process_entry(channel,metadata_list,info_dict, dir)
                 except (DownloadError, ExtractorError) as e:
                     print(f"Error downloading {url}: {e}")
     return metadata_list
@@ -43,11 +35,7 @@ def download_audios(channels, dir):
 def process_entry(channel, metadata_list, entry, files_dir):
     if entry:
             try:
-                # if kp_yt_chn_nm:
-                #     original_filetitle = entry['channel'] + ' ' + entry['title']
-                # else:
                 archive_id = entry['id']
-                
                 _file_path = os.path.join(files_dir,f'{archive_id}')
                 audio_file_path = f'{_file_path}.m4a'
                 subtitle_file_path = f'{_file_path}.zh-Hant.vtt'
@@ -59,16 +47,18 @@ def process_entry(channel, metadata_list, entry, files_dir):
                 file_title = entry['title']
                 text_content = process_subtitle(subtitle_file_path)
                 
-                metadata_list.append([
-                    archive_id,
-                    channel,
-                    yt_channel,
-                    utime,
-                    ctime,
-                    file_size,
-                    file_title,
-                    text_content
-                ])
+                metadata_list.append(
+                    [
+                        archive_id,
+                        channel,
+                        yt_channel,
+                        utime,
+                        ctime,
+                        file_size,
+                        file_title,
+                        text_content
+                    ]
+                )
             except FileExistsError:
                 print('FileExistsError, download timeout')
     else:

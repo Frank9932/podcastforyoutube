@@ -1,6 +1,5 @@
 import json
-from src.utlis import (create_rss_file, 
-                       remove_temp_files,)
+from src.utlis import (create_rss_file, remove_temp_files)
 from src.downloader import download_audios
 from src.cloudflare_s3 import get_bucket, upload_files, delete_files
 from src.database import initialize_database, fetch_metadata, insert_metadata
@@ -17,7 +16,7 @@ def main():
         settings = json.load(settings)
 
     web_dir = settings['bucket']['bucket_url']
-    temp_dir = '/home/leo/repos/podcastforyoutube/temp/'
+    temp_dir = './temp/'
 
     # download
     new_metadata_list = download_audios(channels,temp_dir)
