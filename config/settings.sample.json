@@ -1,0 +1,13 @@
+{
+    "tg": {
+        "token": "telegram bot token",
+        "chat_id": "chat id"
+    },
+    "bucket": {
+        "endpoint_url": "https://xxxxxxxxxxxxxxxxxxxxxxx.r2.cloudflarestorage.com",
+        "aws_access_key_id": "",
+        "aws_secret_access_key": "",
+        "bucket_name": "",
+        "bucket_url": "https://pub-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.r2.dev/"
+    }
+}

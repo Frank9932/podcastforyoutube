@@ -1,12 +1,10 @@
 import os
-from requests import post
+import re
 import json
-import sqlite3
-import datetime
-import subprocess
 import time
-import xml.sax.saxutils as saxutils
 import urllib.parse
+import xml.sax.saxutils as saxutils
+from requests import post
 
 
 def send_msg(msg):
@@ -21,105 +19,83 @@ def send_msg(msg):
         json={"chat_id": chat_id, "text": msg}
     )
 
-def remove_old_files(channels,data_dir):
-    current_date = datetime.date.today()
-    past_date = current_date - datetime.timedelta(days=7)
+def remove_temp_files(dir):
+    try:
+        for root, dirs, files in os.walk(dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                os.remove(file_path)
+    finally:
+        pass
+
+def create_rss_file(channels, metadata_list, temp_dir, web_dir):
+    valid_episodes =[]
     for channel in channels.keys():
-        if channels[channel]["keep_old"]:
+        episodes = []
+        for metadata in metadata_list:
+            # archive_id, 
+            # channel, 
+            # yt_channel, 
+            # utime, 
+            # ctime, 
+            # file_size, 5
+            # file_title, 
+            # text_content
+            if channels[channel]["keep_old"]:
+                seconds_7_days_ago = 0
+            else:
+                # seconds_7_days_ago = time.time() - (7 * 24 * 3600) # filter files 7 days
+                seconds_7_days_ago = time.time() - (60) # test
+            if metadata[1] == channel and metadata[4] > seconds_7_days_ago :
+                episodes.append(metadata)
+        if not episodes :
             continue
-        show_dir = data_dir + channel
-        try:
-            for root, dirs, files in os.walk(show_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    file_date = datetime.date.fromtimestamp(
-                        os.path.getmtime(file_path)
-                    )
-                    if file_date < past_date and file.endswith(".m4a"):
-                        os.remove(file_path)
-        finally:
-            pass
+        episodes = sorted(episodes, key=lambda x: x[4], reverse=True)
 
-def fetch_file_by_id(cursor,name):
-    cursor.execute('SELECT original_filetitle, archive_id FROM files WHERE archive_id = ?', (name,))
-    row = cursor.fetchone()
-    return row[0]
-
-def create_rss_file(channels,data_dir,web_dir,db_path='file_info.db'):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    full_update_list =[]
-    for channel in channels.keys():
-        files = []
-        audio_files_dir = os.path.join(data_dir, channel)
-        show_web_dir = os.path.join(web_dir, channel)
-        for filename in os.listdir(audio_files_dir):
-            filepath = os.path.join(audio_files_dir, filename)
-            if os.path.isfile(filepath) and filename.lower().endswith('.m4a'):
-                name = os.path.splitext(filename)[0]
-                item = {
-                    'path': filepath,                   
-                    'name': name,                       
-                    'fname': filename,                  
-                    'time': os.path.getctime(filepath), 
-                    'length': os.path.getsize(filepath) 
-                }
-                files.append(item)            
-        files = sorted(files, key=lambda x: x['time'], reverse=True)
         # build rss head
-        img_path = os.path.join(show_web_dir,"img.jpg")
+        img_path = os.path.join(web_dir,f"img_{channel}.jpg")
         rss_output = '<?xml version="1.0" encoding="UTF-8"?>\n' \
                     '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">\n' \
                     '  <channel>\n' \
                     f'    <title>{channel}</title>\n' \
                     f'    <itunes:image href="{img_path}" />'
-        # build rss body from files list
-        for item in files:
-            url = os.path.join(show_web_dir,urllib.parse.quote(item['fname']))
-            if item['fname'].endswith('.mp3'):
-                pub_date = time.strftime('%a, %d %b %Y %H:%M:%S %z', time.localtime(item['time']))
-                rss_output += f"""\n    <item>
-                <title>{saxutils.escape(fetch_file_by_id(cursor,item["name"]))}</title>
-                <enclosure url="{saxutils.escape(url)}" length="{item["length"]}" type="audio/mpeg" />
-                <guid isPermaLink="true">{saxutils.escape(url)}</guid>
-                <pubDate>{pub_date}</pubDate>\n    </item>"""
-            elif item['fname'].endswith('.m4a'):
-                pub_date = time.strftime('%a, %d %b %Y %H:%M:%S %z', time.localtime(item['time']))
-                rss_output += f"""\n    <item>
-                <title>{saxutils.escape(fetch_file_by_id(cursor,item["name"]))}</title>
-                <enclosure url="{saxutils.escape(url)}" length="{item["length"]}" type="audio/mp4" />
-                <guid isPermaLink="true">{saxutils.escape(url)}</guid>
-                <pubDate>{pub_date}</pubDate>\n    </item>"""
-            else :
-                pass
+        
+        # build rss body from episodes list
+        for episode in episodes:
+            url = f'{web_dir}{urllib.parse.quote(episode[0])}.m4a'
+            pub_date = time.strftime('%a, %d %b %Y %H:%M:%S %z', time.localtime(episode[4]))
+            title = saxutils.escape(episode[6])
+            text_content = episode[7]
+            rss_output += f"""\n    <item>
+            <title>{title}</title>
+            <enclosure url="{url}" length="{episode[5]}" type="audio/mp4" />
+            <guid isPermaLink="true">{url}</guid>
+            <pubDate>{pub_date}</pubDate>
+            <description><![CDATA[{text_content}]]></description>\n    </item>"""
+
         # build rss foot
         rss_output += '\n  </channel>\n' \
                     '</rss>'
         # write rss index file
         with open(
-            os.path.join(data_dir, channel, "index.rss"),"w",encoding="utf-8"
+            os.path.join(temp_dir, f"index_{channel}.rss"),"w",encoding="utf-8"
             ) as index_file:
             index_file.write(rss_output)
-        # update new podcast items list
-        update_list= []
-        try:
-            with open(
-                os.path.join(data_dir, audio_files_dir, "archive_list"),"r"
-                ) as archive_list_file:
-                archive_list = archive_list_file.read().split("\n")
-        except FileNotFoundError:
-                archive_list = []
-        finally:
-                for item in files:
-                    if item["name"] not in set(archive_list):
-                        update_list.append(item["name"])
-                        archive_list.append(item["name"])
-                        with open(
-                            os.path.join(data_dir, audio_files_dir, "archive_list",),"w"
-                            ) as archive_list_file:
-                            for podcast_name in archive_list:
-                                archive_list_file.write(podcast_name + "\n")
-        full_update_list.extend(update_list)
-    cursor.close()
-    conn.close()
-    return full_update_list
+        
+        valid_episodes.extend(episodes)
+    return valid_episodes
+
+def process_subtitle(file_path):
+    if not os.path.exists(file_path):
+        return None
+    with open(file_path, 'r', encoding='utf-8') as file:
+        _text = file.read()
+    lines = _text.splitlines()
+    text_lines = []
+    for line in lines:
+        if re.match(r'^\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}$', line):
+            continue
+        elif line.strip() and not line.startswith("WEBVTT") and not line.startswith("Kind:") and not line.startswith("Language:"):
+            text_lines.append(line.strip())
+        result = "\n".join(text_lines)
+    return result
