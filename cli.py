@@ -1,32 +1,23 @@
 #!/usr/bin/env python3
-"""rss_tool.py – Maintain a simple podcast feed (audio + RSS).
+"""rss_tool.py – Minimal uploader & (optional) RSS helper.
 
-Configuration
--------------
-The tool now expects **settings.json** in the working directory by default:
+核心逻辑
+────────
+1. scan_dir()         → 找到指定拓展名的文件列表
+2. upload_files()     → 将这些文件上传到 S3‧兼容对象存储
+3. update_rss()       → *只有当 exts 包含 "rss" 时才执行*
 
-```
-{
-  "tg": {                         # ⚠ not used – kept for future use
-    "token": "telegram bot token",
-    "chat_id": "chat id"
-  },
-  "bucket": {
-    "endpoint_url": "https://xxx.r2.cloudflarestorage.com",
-    "aws_access_key_id": "…",
-    "aws_secret_access_key": "…",
-    "bucket_name": "my-podcast",
-    "bucket_url": "https://pub-xxx.r2.dev/"
-  }
-}
-```
+用法示例
+────────
+# 只上传 *.m4a（不会动 RSS）
+python rss_tool.py update \
+    --audio-dir ./assets --rss feed.rss --channel-title "Demo" \
+    --upload
 
-• **bucket** – required when you use `--upload`; if any field is missing the
-  script aborts.  
-• **tg** – currently ignored (placeholder for notifications).
-
-All previous CLI flags remain; `--bucket-cfg` now defaults to *settings.json* so
-most users can omit it.
+# 同时上传 *.m4a 与 feed.rss（因为 --exts m4a rss）
+python rss_tool.py update \
+    --audio-dir ./assets --rss feed.rss --channel-title "Demo" \
+    --exts m4a rss --upload
 """
 from __future__ import annotations
 
@@ -41,19 +32,19 @@ from pathlib import Path
 from typing import Iterable, List, Sequence
 
 ###############################################################################
-# 1. Utilities and data structures
+# 1. 通用工具
 ###############################################################################
 
 def _pubdate(ts: float) -> str:
     return time.strftime("%a, %d %b %Y %H:%M:%S %z", time.localtime(ts))
 
 @dataclass
-class AudioFile:
+class FileObj:
     path: Path
     size: int
 
     @property
-    def object_name(self) -> str:
+    def key(self) -> str:
         return self.path.name
 
     @property
@@ -61,114 +52,106 @@ class AudioFile:
         return self.path.stem.replace("_", " ").replace("-", " ")
 
 ###############################################################################
-# 2. Local file discovery
+# 2. 扫描目录
 ###############################################################################
 
-def scan_audio_dir(audio_dir: Path, exts: Sequence[str] = ("m4a",)) -> List[AudioFile]:
-    files: List[AudioFile] = []
-    for p in audio_dir.rglob("*"):
-        if p.is_file() and p.suffix.lower().lstrip(".") in exts:
-            files.append(AudioFile(path=p, size=p.stat().st_size))
-    return sorted(files, key=lambda af: af.path.stat().st_mtime, reverse=True)
+def scan_dir(directory: Path, exts: Sequence[str]) -> List[FileObj]:
+    wanted = {e.lower().lstrip(".") for e in exts}
+    result: List[FileObj] = []
+    for p in directory.rglob("*"):
+        if p.is_file() and p.suffix.lower().lstrip(".") in wanted:
+            result.append(FileObj(p, p.stat().st_size))
+    return sorted(result, key=lambda f: f.path.stat().st_mtime, reverse=True)
 
 ###############################################################################
-# 3. RSS generation / update helpers
+# 3. （可选）RSS 处理
 ###############################################################################
 
-RSS_NS_ITUNES = "http://www.itunes.com/dtds/podcast-1.0.dtd"
-ET.register_namespace("itunes", RSS_NS_ITUNES)
+RSS_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+ET.register_namespace("itunes", RSS_NS)
 
-
-def _append_item(channel_el: ET.Element, af: AudioFile, base_url: str):
-    item = ET.Element("item")
-    ET.SubElement(item, "title").text = af.title
-    url = base_url + urllib.parse.quote(af.object_name)
-    enc = ET.SubElement(item, "enclosure", {
-        "url": url, "length": str(af.size), "type": "audio/mp4",
-    })
-    ET.SubElement(item, "guid", isPermaLink="true").text = url
-    ET.SubElement(item, "pubDate").text = _pubdate(af.path.stat().st_mtime)
-    channel_el.append(item)
-
-
-def _ensure_root(channel_title: str, channel_image: str | None) -> ET.ElementTree:
+def _new_tree(title: str, image_url: str | None) -> ET.ElementTree:
     root = ET.Element("rss", version="2.0")
     chan = ET.SubElement(root, "channel")
-    ET.SubElement(chan, "title").text = channel_title
-    if channel_image:
-        ET.SubElement(chan, f"{{{RSS_NS_ITUNES}}}image", href=channel_image)
+    ET.SubElement(chan, "title").text = title
+    if image_url:
+        ET.SubElement(chan, f"{{{RSS_NS}}}image", href=image_url)
     return ET.ElementTree(root)
 
+def _append_item(chan: ET.Element, f: FileObj, base_url: str):
+    item = ET.SubElement(chan, "item")
+    ET.SubElement(item, "title").text = f.title
+    url = base_url + urllib.parse.quote(f.key)
+    ET.SubElement(item, "enclosure", {
+        "url": url,
+        "length": str(f.size),
+        "type": "audio/mp4",
+    })
+    ET.SubElement(item, "guid", isPermaLink="true").text = url
+    ET.SubElement(item, "pubDate").text = _pubdate(f.path.stat().st_mtime)
 
-def update_rss_file(
+def update_rss(
     rss_path: Path,
     channel_title: str,
-    web_base_url: str,
-    audio_files: Iterable[AudioFile],
-    channel_image: str | None = None,
-) -> List[AudioFile]:
-    """Write/append items and return list of newly added AudioFile."""
-
+    base_url: str,
+    audio_files: Iterable[FileObj],
+    image_url: str | None = None,
+):
+    # 解析或新建
     if rss_path.exists():
         try:
             tree = ET.parse(rss_path)
-            root = tree.getroot()
-            channel = root.find("channel")
-            if channel is None:
-                raise ET.ParseError("<channel> missing")
-        except ET.ParseError as e:
-            print(f"[WARN] RSS invalid, recreating: {e}")
-            tree = _ensure_root(channel_title, channel_image)
-            channel = tree.getroot().find("channel")  # type: ignore
+            chan = tree.getroot().find("channel")
+            if chan is None:
+                raise ET.ParseError
+        except ET.ParseError:
+            tree = _new_tree(channel_title, image_url)
+            chan = tree.getroot().find("channel")  # type: ignore
     else:
-        tree = _ensure_root(channel_title, channel_image)
-        channel = tree.getroot().find("channel")  # type: ignore
+        tree = _new_tree(channel_title, image_url)
+        chan = tree.getroot().find("channel")      # type: ignore
 
-    present = {Path(e.attrib.get("url", "")).name for e in tree.findall(".//item/enclosure")}
+    existing = {Path(e.get("url", "")).name
+                for e in tree.getroot().findall(".//item/enclosure")}
+    for f in audio_files:
+        if f.key not in existing:
+            _append_item(chan, f, base_url)
 
-    added: List[AudioFile] = []
-    for af in audio_files:
-        if af.object_name in present:
-            continue
-        _append_item(channel, af, web_base_url)
-        added.append(af)
-
-    # Write XML
     rss_path.write_text(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
+        '<?xml version="1.0" encoding="UTF-8"?>\n' +
         ET.tostring(tree.getroot(), encoding="unicode"),
         encoding="utf-8",
     )
-    return added
 
 ###############################################################################
-# 4. Object‑storage upload helpers (Cloudflare R2, MinIO, etc.)
+# 4. S3 / R2 上传
 ###############################################################################
 
 try:
     import boto3
     from botocore.config import Config
     from botocore.exceptions import BotoCoreError, ClientError
-except ModuleNotFoundError:
+except ModuleNotFoundError:   # 单元测试可不装 boto3
     boto3 = None  # type: ignore
 
-DEFAULT_CFG = Path("settings.json")
+DEFAULT_CFG = Path("./config/settings.json")
 
+def _load_cfg(path: Path) -> dict:
+    if not path.exists():
+        print(f"[ERR] 缺少配置文件 {path}", file=sys.stderr)
+        sys.exit(1)
+    return json.loads(path.read_text())
 
 def build_bucket(cfg_path: Path = DEFAULT_CFG):
     if boto3 is None:
-        print("boto3 not found – install it or skip --upload", file=sys.stderr)
+        print("[ERR] 未安装 boto3，无法上传", file=sys.stderr)
         sys.exit(2)
-    if not cfg_path.exists():
-        print(f"Config file '{cfg_path}' missing", file=sys.stderr)
+    cfg = _load_cfg(cfg_path).get("bucket", {})
+    req = ("endpoint_url", "aws_access_key_id", "aws_secret_access_key",
+           "bucket_name", "bucket_url")
+    if any(not cfg.get(k) for k in req):
+        print("[ERR] settings.json › bucket 配置不完整", file=sys.stderr)
         sys.exit(1)
-
-    cfg = json.loads(cfg_path.read_text()).get("bucket", {})
-    required = ("endpoint_url", "aws_access_key_id", "aws_secret_access_key", "bucket_name", "bucket_url")
-    if any(k not in cfg or not cfg[k] for k in required):
-        print("Incomplete 'bucket' section in settings.json", file=sys.stderr)
-        sys.exit(1)
-
     s3 = boto3.resource(
         "s3",
         endpoint_url=cfg["endpoint_url"],
@@ -178,70 +161,66 @@ def build_bucket(cfg_path: Path = DEFAULT_CFG):
     )
     return s3.Bucket(cfg["bucket_name"]), cfg["bucket_url"].rstrip("/") + "/"
 
-
-def upload_paths(bucket, paths: Iterable[Path]):  # type: ignore
-    for p in paths:
+def upload_files(bucket, files: Iterable[FileObj]):  # type: ignore
+    for f in files:
         try:
-            bucket.upload_file(str(p), p.name)
-            print(f"[UPLOAD] {p.name} -> {bucket.name}")
+            bucket.upload_file(str(f.path), f.key)
+            print(f"[OK ] 上传 {f.key}")
         except (BotoCoreError, ClientError) as e:
-            print(f"[ERROR] upload {p}: {e}")
+            print(f"[ERR] {f.key}: {e}")
 
 ###############################################################################
-# 5. CLI – orchestrates the functions above
+# 5. CLI
 ###############################################################################
 
-def _cli_update(args):
-    audio_files = scan_audio_dir(args.audio_dir, args.exts)
-    if not audio_files:
-        print("Nothing to process."); return
+def _cmd_update(args):
+    files = scan_dir(args.audio_dir, args.exts)
+    if not files:
+        print("目录内未找到指定类型的文件。")
+        return
 
-    added = update_rss_file(
-        rss_path=args.rss,
-        channel_title=args.channel_title,
-        web_base_url=args.web_url.rstrip("/") + "/",
-        audio_files=audio_files,
-        channel_image=args.image_url,
-    )
-    print(f"RSS updated: {len(added)} item(s) added.")
+    # 判断是否需要上传
+    if args.upload:
+        bucket, base_url = build_bucket(args.cfg)
+    else:
+        if not args.web_url:
+            print("--web-url 不能为空（除非使用 --upload）", file=sys.stderr)
+            sys.exit(2)
+        bucket = None  # type: ignore
+        base_url = args.web_url.rstrip("/") + "/"
 
-    if args.upload and added:
-        bucket, _ = build_bucket(args.bucket_cfg)
-        upload_paths(bucket, [*added, args.rss])
+    # 如果用户把 rss 写进 --exts，则进行 RSS 合并 / 生成
+    if "rss" in {e.lower().lstrip(".") for e in args.exts}:
+        audio_like = [f for f in files if f.path.suffix.lower() != ".rss"]
+        if audio_like:
+            update_rss(args.rss, args.channel_title, base_url,
+                       audio_like, args.image_url)
 
+    # 执行上传（只传 --exts 里列出的文件）
+    if args.upload:
+        upload_files(bucket, files)
 
 def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description="Podcast RSS helper (settings.json aware)")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    u = sub.add_parser("update", help="scan folder, update RSS, optional upload")
-    u.add_argument("--rss", type=Path, required=True)
-    u.add_argument("--audio-dir", type=Path, required=True)
-    u.add_argument("--channel-title", required=True)
-    u.add_argument("--web-url", required=True)
-    u.add_argument("--image-url")
-    u.add_argument("--exts", nargs="*", default=["m4a"], help="audio extensions")
-    u.add_argument("--upload", action="store_true")
-    u.add_argument("--bucket-cfg", type=Path, default=DEFAULT_CFG,
-                   help="settings.json path (default: settings.json)")
+    p = argparse.ArgumentParser(description="Upload audio / update RSS")
+    # 所有选项直接加到顶层
+    p.add_argument("--audio-dir", type=Path, required=True)
+    p.add_argument("--upload", action="store_true", help="push to bucket")
+    p.add_argument("--exts", nargs="+", default=["m4a"],
+                   help="file suffix list, e.g. m4a rss")
+    p.add_argument("--rss", type=Path,
+                   help="rss path (required IF you put 'rss' in --exts)")
+    p.add_argument("--channel-title",
+                   help="podcast title (required when updating rss)")
+    p.add_argument("--image-url")
+    p.add_argument("--web-url",
+                   help="base URL when *not* uploading")
+    p.add_argument("--cfg", type=Path, default=DEFAULT_CFG,
+                   help="settings.json location")
     return p
 
-###############################################################################
-# 6. Main entry
-###############################################################################
-
 def main(argv: Sequence[str] | None = None):
-    # the upload function should be pure for only upload designated types of files
-    # it should get a list of the designated types of files in the folder, use the items in the list to update the rss file
-    # for each item in list
-    # use bucket_url + item file name as rss audio file's access url
     args = _build_parser().parse_args(argv)
-    if args.cmd == "update":
-        if args.upload and not args.bucket_cfg.exists():
-            print(f"Config file '{args.bucket_cfg}' not found", file=sys.stderr)
-            sys.exit(1)
-        _cli_update(args)
-
+    _cmd_update(args)          # 直接调用即可
 
 if __name__ == "__main__":
     main()
